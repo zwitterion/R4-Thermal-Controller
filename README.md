@@ -21,6 +21,10 @@ A robust, web-based PID temperature controller designed for the **Arduino UNO R4
 *   **Safety**: Configurable hard safety temperature limit.
 *   **UI Themes**: Toggle between Cyberpunk Dark and Clean Light themes.
 
+## 📸 Screenshot
+
+![Web Interface](screenshot.png)
+
 ## 🛠️ Hardware Requirements
 
 *   **Arduino UNO R4 WiFi**
@@ -110,6 +114,3 @@ MIT License
 ## About the Author
 Hi, I'm Jose Saura — a retired software engineer exploring chemistry, technology, culture, and creative engineering. You can find more of my work on my blog:
 👉 [Visit my blog](http://www.egooge.com)
-
-
-
