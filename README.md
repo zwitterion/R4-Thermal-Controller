@@ -107,6 +107,14 @@ pip install minify-html
 4.  Click **Save Profile**.
 5.  Go to **Controls** and click **Start**.
 
+## 🤖 AI-Driven Development
+
+This project was created using **Google Gemini**.
+
+I have included a file named [`prompt.txt`](prompt.txt) which contains the "Master Prompt" used to generate this codebase. This highlights an emerging paradigm in software engineering: **The Prompt is the Source**.
+
+In the future, sharing the precise prompts used to generate software might be more important than sharing the actual code. By sharing the prompt, we allow others to not just copy the software, but to regenerate, adapt, and evolve it for different hardware or requirements simply by modifying the natural language instructions.
+
 ## 📄 License
 
 MIT License

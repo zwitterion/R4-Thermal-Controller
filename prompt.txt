@@ -1,0 +1,40 @@
+Role: You are an expert Embedded Systems Engineer specializing in C++ for Arduino and IoT.
+
+Objective: Create a robust, modular firmware for a Thermal PID Controller running on the Arduino UNO R4 WiFi.
+
+Hardware Stack:
+
+MCU: Arduino UNO R4 WiFi (Renesas RA4M1).
+Output: Solid State Relay (SSR) for heating elements.
+Sensors: Support both DS18B20 (OneWire) and MAX31856 (SPI Thermocouple).
+Architecture Requirements: Please generate the following C++ header files with specific logic:
+
+PID_SSR.h: A class that handles PID calculation and SSR control.
+
+Logic: Use a time-proportional control algorithm (Window Size ~2000ms).
+Features: Implement "Integral Separation" (anti-windup) and a Derivative Filter.
+Autotune: Implement a Relay Method autotuner (oscillate around setpoint with hysteresis) to calculate Kp, Ki, Kd using Ziegler-Nichols rules.
+ProfileEngine.h: A state machine for running thermal profiles.
+
+Structure: A profile consists of multiple steps.
+Step Types:
+RAMP_TIME: Go to Target T over Duration D.
+RAMP_RATE: Go to Target T at Rate R (deg/min).
+SOAK_TIME: Hold Target T for Duration D.
+HOLD_STABLE: Wait until temperature stabilizes (rate of change < threshold).
+WAIT_INPUT: Wait for a digital input pin state.
+Interpolation: The update() method should return the calculated setpoint based on elapsed time.
+SimpleWebSocket.h: A lightweight, manual WebSocket server implementation (do not use a heavy 3rd party library).
+
+Namespace: SimpleWebSocket.
+Handshake: Implement the HTTP upgrade handshake manually (calculate Sec-WebSocket-Accept using SHA1 and Base64).
+Framing: Handle masking/unmasking of incoming frames and basic framing for outgoing text messages.
+Concurrency: Support up to 4 simultaneous clients using WiFiS3 library.
+EEPROM_Manager.h: A struct-based persistence manager.
+
+Data: Store PID constants, WiFi credentials, System Settings, and up to 5 Profiles.
+Integrity: Use a Magic Number (e.g., 0xA1B2C3DA) and a custom CRC32 calculation to verify data integrity on load. If corrupt, load defaults.
+convert.py: A Python helper script.
+
+Goal: Compress index.html using Gzip and generate a C++ header file (web_assets.h) containing the hex array.
+Features: Use argparse to support a --mode dev (minified string) and --mode prod (gzipped hex) switch.
