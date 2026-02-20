@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>R4 Thermal Controller</title>
+    <style>
+        :root { --bg: #050505; --panel: #111; --primary: #00ff9d; --warn: #ffbd00; --danger: #ff0055; --text: #eee; --dim: #555; --input-bg: #222; }
+        body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; margin: 0; padding: 10px; overflow-x: hidden; }
+        .container { max-width: 600px; margin: 0 auto; }
+        .card { background: var(--panel); border: 1px solid var(--dim); padding: 15px; margin-bottom: 15px; border-radius: 4px; box-shadow: 0 0 10px rgba(0,255,157,0.05); }
+        h2 { border-bottom: 1px solid var(--primary); color: var(--primary); margin-top: 0; text-transform: uppercase; font-size: 1.2rem; }
+        .row { display: flex; justify-content: space-between; align-items: center; gap: 5px; }
+        .big-val { font-size: 2.5rem; font-weight: bold; }
+        .label { color: var(--dim); font-size: 0.8rem; text-transform: uppercase;}
+        button { background: transparent; border: 1px solid var(--primary); color: var(--primary); padding: 10px 15px; cursor: pointer; font-family: inherit; text-transform: uppercase; width: 100%; margin: 5px 0; transition: 0.2s; }
+        button:active { background: var(--primary); color: #000; }
+        button.danger { border-color: var(--danger); color: var(--danger); }
+        button.danger:active { background: var(--danger); color: #fff; }
+        button:disabled { border-color: var(--dim); color: var(--dim); cursor: not-allowed; }
+        input { background: var(--input-bg); border: 1px solid var(--dim); color: var(--text); padding: 8px; width: 60px; font-family: inherit; }
+        .gauge-container { position: relative; height: 150px; width: 100%; }
+        svg { width: 100%; height: 100%; }
+        .status-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: var(--panel); border-top: 1px solid var(--dim); padding: 5px; text-align: center; font-size: 0.8rem; }
+        #overlay { position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); display:flex; justify-content:center; align-items:center; z-index:999; color:var(--danger); font-size:2rem; display:none; }
+        #modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; justify-content: center; align-items: center; z-index: 1000; }
+        #modal { background: var(--panel); border: 1px solid var(--primary); padding: 20px; width: 80%; max-width: 300px; text-align: center; border-radius: 4px; box-shadow: 0 0 15px rgba(0,255,157,0.1); }
+        #modal h3 { margin-top: 0; color: var(--primary); }
+        #modal .btns { display: flex; gap: 10px; margin-top: 15px; }
+        #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--primary); color: var(--primary); padding: 10px 20px; border-radius: 4px; z-index: 1001; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+        #toast.show { opacity: 1; }
+        [data-tooltip] { position: relative; cursor: help; }
+        [data-tooltip]:hover::after { content: attr(data-tooltip); position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--primary); color: var(--text); padding: 5px 10px; border-radius: 4px; font-size: 0.7rem; white-space: nowrap; z-index: 1002; box-shadow: 0 0 10px rgba(0,0,0,0.5); margin-bottom: 5px; }
+        #help-modal, #info-modal { background: var(--panel); border: 1px solid var(--primary); padding: 20px; width: 90%; max-width: 400px; border-radius: 4px; text-align: left; }
+        #help-modal h3, #info-modal h3 { color: var(--primary); margin-top: 0; border-bottom: 1px solid var(--dim); padding-bottom: 10px; }
+        #help-modal ul, #info-modal ul { padding-left: 20px; margin: 10px 0; color: var(--text); }
+        #help-modal li, #info-modal li { margin-bottom: 8px; font-size: 0.85rem; }
+        #help-modal b, #info-modal b { color: var(--warn); }
+    </style>
+</head>
+<body>
+    <div id="overlay">CONNECTION LOST</div>
+    <div class="container">
+        <div class="card">
+            <div class="row">
+                <div><div class="label">Current</div><div class="big-val" id="val-temp">--.-</div></div>
+                <div><div class="label">Target</div><div class="big-val" id="val-set">--.-</div></div>
+            </div>
+            <div class="gauge-container">
+                <svg viewBox="0 0 200 100">
+                    <path d="M20,90 A80,80 0 0,1 180,90" fill="none" stroke="#333" stroke-width="10"/>
+                    <path id="gauge-arc" d="M20,90 A80,80 0 0,1 20,90" fill="none" stroke="var(--primary)" stroke-width="10"/>
+                    <text x="100" y="85" text-anchor="middle" fill="#fff" font-size="20" id="val-ssr">0%</text>
+                </svg>
+            </div>
+            <div class="row">
+                <div class="label" id="state-lbl">IDLE</div>
+                <div class="label" id="timer-lbl">00:00</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="row" style="margin-bottom:5px">
+                <h2 style="border:none;margin:0;font-size:1rem">History</h2>
+                <select id="chart-hist" onchange="setMaxPts(this.value)" style="background:var(--input-bg);color:var(--text);border:1px solid var(--dim);padding:2px;font-family:inherit;font-size:0.8rem">
+                    <option value="36000">Full</option>
+                    <option value="100">25s</option>
+                    <option value="500">2m</option>
+                    <option value="2400">10m</option>
+                    <option value="7200">30m</option>
+                </select>
+                <button onclick="clearChart()" style="width:auto; padding:2px 8px; margin-left:5px; font-size:0.8rem" data-tooltip="Clear History">Clear</button>
+                <button onclick="downloadCSV()" style="width:auto; padding:2px 8px; margin-left:5px; font-size:0.8rem" data-tooltip="Export CSV">CSV</button>
+            </div>
+            <canvas id="chart" style="width:100%;height:200px"></canvas>
+        </div>
+
+        <div class="card">
+            <h2>Controls</h2>
+            <div class="row">
+                <button onclick="send('start')" id="btn-start" data-tooltip="Start Profile">Start</button>
+                <button onclick="send('pause')" id="btn-pause" data-tooltip="Pause/Resume">Pause</button>
+            </div>
+            <button class="danger" onclick="send('stop')" data-tooltip="Stop & Reset">STOP / RESET</button>
+        </div>
+
+        <div class="card">
+            <h2>Tuning Lab</h2>
+            <div class="row" style="justify-content: space-around;">
+                <div><span class="label" data-tooltip="Proportional Gain">Kp</span> <input id="in-kp" type="number"></div>
+                <div><span class="label" data-tooltip="Integral Gain">Ki</span> <input id="in-ki" type="number"></div>
+                <div><span class="label" data-tooltip="Derivative Gain">Kd</span> <input id="in-kd" type="number"></div>
+            </div>
+            <div class="row" style="justify-content: space-around; margin-top: 10px;">
+                <div><span class="label" data-tooltip="Integral Separation (deg C)">I-Band</span> <input id="in-ib" type="number"></div>
+                <div><span class="label" data-tooltip="Derivative Filter (0.0-1.0)">D-Filt</span> <input id="in-df" type="number" step="0.1" max="1.0" min="0.0"></div>
+            </div>
+            <button onclick="savePID()">Save PID</button>
+            <div class="row">
+                <button id="btn-tune-start" data-tooltip="Auto-Calculate PID" onclick="showConfirm('Start Autotune? This process heats the system.', () => send('autotune'))">Run Autotune</button>
+                <button id="btn-tune-stop" class="danger" onclick="send('stop')">Cancel</button>
+            </div>
+            <button onclick="showHelp()" style="border-color:var(--dim); color:var(--dim); margin-top:10px;">Tuning Guide</button>
+        </div>
+
+        <div class="card">
+            <h2>Profile Editor</h2>
+            <div class="row">
+                <span class="label">Slot</span>
+                <select id="pe-id" onchange="fetchProfile()" style="background:var(--input-bg);color:var(--text);border:1px solid var(--dim);padding:5px"><option value="0">1</option><option value="1">2</option><option value="2">3</option><option value="3">4</option><option value="4">5</option></select>
+            </div>
+            <div class="row" style="margin-top:5px">
+                <span class="label">Name</span>
+                <input id="pe-name" type="text" style="width:100%">
+            </div>
+            <div id="pe-steps" style="margin:10px 0;border-top:1px solid #333"></div>
+            <div class="row"><button onclick="addStep()">+ Step</button><button class="danger" onclick="steps=[];renderSteps()">Clear</button></div>
+            <div class="row" style="margin-top:5px">
+                <button onclick="saveProfile()">Save Profile</button>
+                <button onclick="duplicateProfile()" style="width:auto; padding:10px" data-tooltip="Copy to another slot">Duplicate</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Network</h2>
+            <div class="row">
+                <span class="label">SSID</span> 
+                <div style="display:flex; width:100%; gap:5px">
+                    <select id="net-ssid" style="flex-grow:1; background:var(--input-bg); color:var(--text); border:1px solid var(--dim); padding:5px"><option value="">(Enter Manually or Scan)</option></select>
+                    <button onclick="scanWifi()" style="width:auto; padding:5px 10px" data-tooltip="Scan for Networks">Scan</button>
+                </div>
+            </div>
+            <div class="row" style="margin-top:5px">
+                <span class="label">Pass</span>
+                <div style="display:flex; width:100%; gap:5px">
+                    <input id="net-pass" type="password" style="flex-grow:1; width:auto">
+                    <button onclick="togglePass(this)" style="width:auto; padding:5px 10px" data-tooltip="Show/Hide Password">Show</button>
+                </div>
+            </div>
+            <div class="row" style="margin-top:5px">
+                <button onclick="saveWifi()">Save & Reboot</button>
+                <button class="danger" onclick="forgetWifi()" style="width:auto; padding:10px" data-tooltip="Clear Credentials">Forget</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>System</h2>
+            <button onclick="toggleTheme()" style="margin-bottom:5px">Toggle Theme</button>
+            <div class="row" style="margin-bottom:5px">
+                <span class="label">Sensor</span>
+                <select id="sys-sensor" onchange="updateSensorUI()" style="background:var(--input-bg);color:var(--text);border:1px solid var(--dim);padding:5px;flex-grow:1">
+                    <option value="0">DS18B20 (OneWire)</option>
+                    <option value="1">MAX31856 (Type K)</option>
+                </select>
+            </div>
+            <div id="row-tc-type" class="row" style="margin-bottom:5px; display:none">
+                <span class="label">TC Type</span>
+                <select id="sys-tc-type" style="background:var(--input-bg);color:var(--text);border:1px solid var(--dim);padding:5px;flex-grow:1">
+                    <option value="0">Type B</option> <option value="1">Type E</option>
+                    <option value="2">Type J</option> <option value="3">Type K</option>
+                    <option value="4">Type N</option> <option value="5">Type R</option>
+                    <option value="6">Type S</option> <option value="7">Type T</option>
+                </select>
+            </div>
+            <button onclick="saveSensorConfig()" style="margin-bottom:5px">Save Sensor Settings</button>
+            <div class="row" style="margin-bottom:5px; margin-top:10px; border-top:1px solid var(--dim); padding-top:10px">
+                <span class="label">Safety Limit (°C)</span>
+                <div style="display:flex; width:100%; gap:5px">
+                    <input id="sys-safety" type="number" style="flex-grow:1; width:auto">
+                    <button onclick="saveSafety()" style="width:auto; padding:5px 10px">Save</button>
+                </div>
+            </div>
+            <button onclick="showSystemInfo()" style="margin-bottom:5px">System Info</button>
+            <button class="danger" onclick="showConfirm('Reboot Controller?', () => send('reboot'))" style="margin-bottom:5px">Reboot</button>
+            <button class="danger" onclick="showConfirm('Factory Reset? This will erase all profiles and settings.', () => send('reset'))" data-tooltip="Restore Defaults">Factory Reset</button>
+        </div>
+    </div>
+
+    <div id="modal-backdrop">
+        <div id="modal">
+            <h3>CONFIRM</h3>
+            <div id="modal-msg"></div>
+            <div class="btns">
+                <button onclick="modalYes()">YES</button>
+                <button class="danger" onclick="modalNo()">NO</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="help-backdrop" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:2000; justify-content:center; align-items:center;">
+        <div id="help-modal">
+            <h3>Help & Guide</h3>
+            <h4 style="margin:10px 0 5px 0;color:var(--dim);border-bottom:1px solid #333">PID Tuning</h4>
+            <ul>
+                <li><b>Kp (Prop):</b> Main heating force. High = Fast, Low = Smooth. Too high causes overshoot.</li>
+                <li><b>Ki (Int):</b> Precision. Fixes small temp gaps. Too high causes oscillation.</li>
+                <li><b>Kd (Deriv):</b> Dampening. Resists change to stop overshoot. Too high causes jitter.</li>
+                <li><b>I-Band:</b> Anti-Windup. Ki is only active within +/- this &deg;C of target.</li>
+                <li><b>D-Filt:</b> Noise Filter (0.0-1.0). 1.0=Off, 0.1=Strong. Rec: 0.1-0.2 for DS18B20.</li>
+            </ul>
+            <h4 style="margin:10px 0 5px 0;color:var(--dim);border-bottom:1px solid #333">Profile Steps</h4>
+            <ul>
+                <li><b>Ramp (Time):</b> Reach target temp over specified Time (sec).</li>
+                <li><b>Soak (Time):</b> Hold target temp for specified Time (sec).</li>
+                <li><b>Ramp (Rate):</b> Reach target at Rate (deg/min).</li>
+                <li><b>Hold (Stable):</b> Hold until temp change < Rate (deg/min).</li>
+                <li><b>Wait (Input):</b> Wait for Pin # to match State (0 or 1).</li>
+            </ul>
+            <button onclick="document.getElementById('help-backdrop').style.display='none'">Close</button>
+        </div>
+    </div>
+
+    <div id="info-backdrop" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:2000; justify-content:center; align-items:center;">
+        <div id="info-modal">
+            <h3>System Info</h3>
+            <ul>
+                <li><b>Uptime:</b> <span id="sys-uptime"></span></li>
+                <li><b>Free RAM:</b> <span id="sys-ram"></span> bytes</li>
+                <li><b>Signal:</b> <span id="sys-rssi"></span> dBm</li>
+            </ul>
+            <button onclick="document.getElementById('info-backdrop').style.display='none'">Close</button>
+        </div>
+    </div>
+
+    <div id="toast"></div>
+
+    <script>
+        let ws;
+        let lastMsg = Date.now();
+        let pidLoaded = false;
+        let lastState = 'IDLE';
+        let isScanning = false;
+        let hasConnected = false;
+        
+        function connect() {
+            ws = new WebSocket('ws://' + location.hostname + ':81/');
+            ws.onopen = () => { 
+                hasConnected = true;
+                document.getElementById('overlay').style.display = 'none';
+
+                // Once WebSocket is connected, fetch initial data to avoid race conditions
+                fetchProfile().then(() => {
+                    return fetch('/api/info');
+                }).then(r=>r.json()).then(d=>{ 
+                    if(d.sensor !== undefined) document.getElementById('sys-sensor').value = d.sensor; 
+                    if(d.tcType !== undefined) document.getElementById('sys-tc-type').value = d.tcType;
+                    if(d.ssid) document.getElementById('net-ssid').innerHTML = `<option value="${d.ssid}" selected>${d.ssid} (Saved)</option><option value="">(Scan for others)</option>`;
+                    if(d.safety !== undefined) document.getElementById('sys-safety').value = d.safety;
+                    updateSensorUI();
+                });
+            };
+            ws.onmessage = (e) => {
+                lastMsg = Date.now();
+                const d = JSON.parse(e.data);
+                document.getElementById('overlay').style.display = 'none';
+                if (lastState !== 'RUNNING' && d.state === 'RUNNING') {
+                    clearChart();
+                }
+                updateUI(d);
+                updateChart(d);
+            };
+            ws.onclose = () => { 
+                if (hasConnected) {
+                    document.getElementById('overlay').style.display = 'flex'; 
+                }
+                setTimeout(connect, 3000); 
+            };
+        }
+
+        let _confirmCb;
+        function showConfirm(msg, cb) {
+            document.getElementById('modal-msg').innerText = msg;
+            _confirmCb = cb;
+            document.getElementById('modal-backdrop').style.display = 'flex';
+        }
+        function modalYes() {
+            if(_confirmCb) _confirmCb();
+            document.getElementById('modal-backdrop').style.display = 'none';
+        }
+        function modalNo() {
+            document.getElementById('modal-backdrop').style.display = 'none';
+        }
+
+        function showHelp() {
+            document.getElementById('help-backdrop').style.display = 'flex';
+        }
+
+        function showSystemInfo() {
+            fetch('/api/info').then(r=>r.json()).then(d=>{
+                const s = Math.floor(d.uptime/1000);
+                const h = Math.floor(s/3600);
+                const m = Math.floor((s%3600)/60);
+                const sec = s%60;
+                document.getElementById('sys-uptime').innerText = h + 'h ' + m + 'm ' + sec + 's';
+                document.getElementById('sys-ram').innerText = d.ram;
+                document.getElementById('sys-rssi').innerText = d.rssi;
+                document.getElementById('info-backdrop').style.display = 'flex';
+            });
+        }
+
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            t.innerText = msg;
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 3000);
+        }
+
+        function send(cmd, val) {
+            fetch('/api/command', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({cmd: cmd, val: val})
+            }).then(() => {
+                if (cmd === 'reset') {
+                    pidLoaded = false; // Force PID inputs to reload from server
+                    fetchProfile(); // Reload default profile
+                }
+            }).catch(e => console.error('API Error:', e));
+        }
+
+        function savePID() {
+            const p = {
+                kp: parseFloat(document.getElementById('in-kp').value),
+                ki: parseFloat(document.getElementById('in-ki').value),
+                kd: parseFloat(document.getElementById('in-kd').value),
+                ib: parseFloat(document.getElementById('in-ib').value),
+                df: parseFloat(document.getElementById('in-df').value)
+            };
+            fetch('/api/pid', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(p)
+            }).then(() => showToast('PID Saved'))
+              .catch(e => console.error('PID Save Error:', e));
+        }
+
+        function duplicateProfile() {
+            const target = prompt("Enter target slot number (1-5):");
+            if (!target) return;
+            const id = parseInt(target) - 1;
+            if (isNaN(id) || id < 0 || id > 4) return alert("Invalid slot");
+            
+            const name = document.getElementById('pe-name').value + " (Copy)";
+            
+            fetch('/api/profile', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({id: id, name: name.substring(0,15), steps: steps})
+            }).then(() => {
+                showToast('Duplicated to Slot ' + (id+1));
+                document.getElementById('pe-id').value = id;
+                fetchProfile();
+            }).catch(e => console.error('Error:', e));
+        }
+
+        function saveWifi() {
+            const s = document.getElementById('net-ssid').value;
+            const p = document.getElementById('net-pass').value;
+            if(!s) return alert('SSID required');
+            showConfirm('Save Network and Reboot?', () => {
+                fetch('/api/wifi', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ssid:s, pass:p})
+                }).then(() => showToast('Rebooting...'));
+            });
+        }
+
+        function forgetWifi() {
+            showConfirm('Forget Network and Reboot?', () => {
+                fetch('/api/forget', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                }).then(() => showToast('Rebooting...'));
+            });
+        }
+
+        function scanWifi() {
+            const sel = document.getElementById('net-ssid');
+            sel.innerHTML = '<option>Scanning...</option>';
+            isScanning = true;
+            fetch('/api/scan', { method: 'POST', body: '{}' })
+                .then(r => r.json())
+                .then(list => {
+                    sel.innerHTML = '<option value="">Select Network...</option>';
+                    const unique = {};
+                    list.forEach(n => {
+                        if(!unique[n.ssid] || n.rssi > unique[n.ssid].rssi) unique[n.ssid] = n;
+                    });
+                    Object.values(unique).sort((a,b)=>b.rssi-a.rssi).forEach(n => {
+                        sel.innerHTML += `<option value="${n.ssid}">${n.ssid} (${n.rssi} dBm)</option>`;
+                    });
+                    showToast('Scan Complete');
+                }).catch(() => { sel.innerHTML = '<option>Error</option>'; })
+                .finally(() => { isScanning = false; });
+        }
+
+        function updateSensorUI() {
+            const type = document.getElementById('sys-sensor').value;
+            document.getElementById('row-tc-type').style.display = (type == 1) ? 'flex' : 'none';
+        }
+
+        function saveSensorConfig() {
+            const type = document.getElementById('sys-sensor').value;
+            const tc = document.getElementById('sys-tc-type').value;
+            showConfirm('Save Sensor Settings and Reboot?', () => {
+                fetch('/api/sensor', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({type: parseInt(type), tcType: parseInt(tc)})
+                }).then(() => showToast('Rebooting...'));
+            });
+        }
+
+        function saveSafety() {
+            const val = document.getElementById('sys-safety').value;
+            fetch('/api/safety', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({limit: parseFloat(val)})
+            }).then(() => showToast('Safety Limit Saved'));
+        }
+
+        function togglePass(btn) {
+            const x = document.getElementById("net-pass");
+            x.type = x.type === "password" ? "text" : "password";
+            btn.innerText = x.type === "password" ? "Show" : "Hide";
+        }
+
+        let isDark = true;
+        function setTheme(dark) {
+            isDark = dark;
+            const r = document.documentElement.style;
+            if(!isDark) {
+                r.setProperty('--bg', '#f4f4f4');
+                r.setProperty('--panel', '#ffffff');
+                r.setProperty('--text', '#333333');
+                r.setProperty('--dim', '#666666');
+                r.setProperty('--primary', '#009e60');
+                r.setProperty('--warn', '#d48806');
+                r.setProperty('--danger', '#d90429');
+                r.setProperty('--input-bg', '#e0e0e0');
+            } else {
+                r.setProperty('--bg', '#050505');
+                r.setProperty('--panel', '#111');
+                r.setProperty('--text', '#eee');
+                r.setProperty('--dim', '#555');
+                r.setProperty('--primary', '#00ff9d');
+                r.setProperty('--warn', '#ffbd00');
+                r.setProperty('--danger', '#ff0055');
+                r.setProperty('--input-bg', '#222');
+            }
+            localStorage.setItem('theme', isDark ? 'dark' : 'light');
+        }
+
+        function toggleTheme() {
+            setTheme(!isDark);
+        }
+
+        function applyInitialTheme() {
+            if(localStorage.getItem('theme') === 'light') setTheme(false);
+        }
+
+        let steps = [];
+        let dragSrcEl = null;
+        function handleDragStart(e) {
+            dragSrcEl = this;
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/html', this.innerHTML);
+            this.style.opacity = '0.4';
+        }
+        function handleDragOver(e) {
+            if (e.preventDefault) e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            return false;
+        }
+        function handleDrop(e) {
+            if (e.stopPropagation) e.stopPropagation();
+            if (dragSrcEl != this) {
+                const srcIdx = parseInt(dragSrcEl.getAttribute('data-index'));
+                const destIdx = parseInt(this.getAttribute('data-index'));
+                const item = steps[srcIdx];
+                steps.splice(srcIdx, 1);
+                steps.splice(destIdx, 0, item);
+                renderSteps();
+            }
+            return false;
+        }
+        function handleDragEnd(e) {
+            this.style.opacity = '1';
+        }
+
+        // Touch Support
+        let touchSrcEl = null;
+        let touchClone = null;
+        
+        function handleTouchStart(e) {
+            touchSrcEl = this;
+            this.style.opacity = '0.4';
+            const touch = e.touches[0];
+            
+            // Create a clone to follow the finger
+            touchClone = this.cloneNode(true);
+            touchClone.style.position = 'absolute';
+            touchClone.style.top = (touch.pageY - 10) + 'px';
+            touchClone.style.left = (touch.pageX - 10) + 'px';
+            touchClone.style.width = this.offsetWidth + 'px';
+            touchClone.style.zIndex = '1000';
+            touchClone.style.background = 'var(--input-bg)';
+            touchClone.style.opacity = '0.8';
+            touchClone.style.pointerEvents = 'none'; // Let clicks pass through to detect underlying elements
+            document.body.appendChild(touchClone);
+        }
+
+        function handleTouchMove(e) {
+            e.preventDefault(); // Prevent scrolling while dragging
+            const touch = e.touches[0];
+            if(touchClone) {
+                touchClone.style.top = (touch.pageY - 10) + 'px';
+                touchClone.style.left = (touch.pageX - 10) + 'px';
+            }
+        }
+
+        function handleTouchEnd(e) {
+            this.style.opacity = '1';
+            if(touchClone) { document.body.removeChild(touchClone); touchClone = null; }
+            
+            const touch = e.changedTouches[0];
+            const target = document.elementFromPoint(touch.clientX, touch.clientY);
+            const destRow = target.closest('.row[draggable="true"]');
+            
+            if (destRow && destRow != this) {
+                const srcIdx = parseInt(this.getAttribute('data-index'));
+                const destIdx = parseInt(destRow.getAttribute('data-index'));
+                const item = steps[srcIdx];
+                steps.splice(srcIdx, 1);
+                steps.splice(destIdx, 0, item);
+                renderSteps();
+            }
+        }
+
+        function resetChartScale() {
+            if(steps.length > 0) {
+                let min = 1000, max = -1000;
+                steps.forEach(s => {
+                    min = Math.min(min, s.target);
+                    max = Math.max(max, s.target);
+                });
+                const pad = Math.max((max - min) * 0.1, 10); // 10% padding, min 10 units
+                chartMin = min - pad;
+                chartMax = max + pad;
+            } else {
+                chartMin = 0; chartMax = 250;
+            }
+        }
+
+        function fetchProfile() {
+            const id = document.getElementById('pe-id').value;
+            return fetch('/api/profile?id=' + id).then(r=>r.json()).then(d=>{
+                document.getElementById('pe-name').value = d.name;
+                steps = d.steps || [];
+                resetChartScale();
+                renderSteps();
+            });
+        }
+        function renderSteps() {
+            const c = document.getElementById('pe-steps');
+            c.innerHTML = '';
+            steps.forEach((s,i) => {
+                const d = document.createElement('div');
+                d.className = 'row';
+                d.draggable = true;
+                d.setAttribute('data-index', i);
+                d.style.borderBottom='1px solid #222';
+                d.style.cursor = 'move';
+                d.addEventListener('dragstart', handleDragStart, false);
+                d.addEventListener('dragover', handleDragOver, false);
+                d.addEventListener('drop', handleDrop, false);
+                d.addEventListener('dragend', handleDragEnd, false);
+                d.addEventListener('touchstart', handleTouchStart, {passive: false});
+                d.addEventListener('touchmove', handleTouchMove, {passive: false});
+                d.addEventListener('touchend', handleTouchEnd, false);
+                
+                let val1 = s.target;
+                let val2 = s.duration;
+                let lbl1 = "°C";
+                let lbl2 = "Min";
+                
+                // Type specific formatting
+                if (s.type == 2 || s.type == 3) { // Rate or Hold
+                    val2 = s.duration / 100.0; // Convert back to float
+                    lbl2 = "Deg/m";
+                } else if (s.type == 4) { // Wait Input
+                    val1 = s.target; // Pin
+                    val2 = s.duration; // State
+                    lbl1 = "Pin";
+                    lbl2 = "Value";
+                }
+
+                d.innerHTML = `
+                    <span class="label">${i+1}</span>
+                    <select onchange="changeStepType(${i}, this.value)" style="width:95px;background:var(--input-bg);color:var(--text);border:none;font-size:0.8rem">
+                        <option value="0" ${s.type==0?'selected':''}>Ramp (Time)</option>
+                        <option value="1" ${s.type==1?'selected':''}>Soak (Time)</option>
+                        <option value="2" ${s.type==2?'selected':''}>Ramp (Rate)</option>
+                        <option value="3" ${s.type==3?'selected':''}>Hold (Stable)</option>
+                        <option value="4" ${s.type==4?'selected':''}>Wait (Input)</option>
+                    </select>
+                    <div style="display:flex;flex-direction:column;align-items:center">
+                        <span style="font-size:0.6rem;color:var(--dim);margin-bottom:2px">${lbl1}</span>
+                        <input type="number" value="${val1}" onchange="updateStepVal(${i}, 1, this.value)" style="width:50px">
+                    </div>
+                    <div style="display:flex;flex-direction:column;align-items:center">
+                        <span style="font-size:0.6rem;color:var(--dim);margin-bottom:2px">${lbl2}</span>
+                        <input type="number" value="${val2}" onchange="updateStepVal(${i}, 2, this.value)" style="width:50px">
+                    </div>
+                    <button class="danger" style="width:30px;padding:5px" onclick="steps.splice(${i},1);renderSteps()">x</button>
+                `;
+                c.appendChild(d);
+            });
+        }
+        
+        function changeStepType(i, val) {
+            steps[i].type = parseInt(val);
+            // Reset defaults for new type to avoid confusion
+            if (steps[i].type == 4) { steps[i].target = 2; steps[i].duration = 1; } // Pin 2, High
+            else if (steps[i].type == 2 || steps[i].type == 3) { steps[i].duration = 100; } // 1.0 deg/min
+            renderSteps();
+        }
+
+        function updateStepVal(i, field, val) {
+            const v = parseFloat(val);
+            if (field == 1) {
+                steps[i].target = v;
+            } else {
+                // Handle scaling for Rate/Threshold
+                if (steps[i].type == 2 || steps[i].type == 3) {
+                    steps[i].duration = Math.round(v * 100);
+                } else {
+                    steps[i].duration = Math.round(v);
+                }
+            }
+        }
+
+        function addStep() { steps.push({type:0, target:25, duration:60}); renderSteps(); }
+        function saveProfile() {
+            const id = parseInt(document.getElementById('pe-id').value);
+            const name = document.getElementById('pe-name').value;
+            fetch('/api/profile', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({id:id, name:name, steps:steps})
+            }).then(()=>{ showToast('Profile Saved'); });
+        }
+
+        function updateUI(d) {
+            document.getElementById('val-temp').innerText = d.temp.toFixed(1);
+            document.getElementById('val-set').innerText = d.set.toFixed(1);
+            document.getElementById('val-ssr').textContent = Math.round(d.ssr) + '%';
+            document.getElementById('state-lbl').innerText = d.state;
+            
+            // Button States
+            const isTuning = d.state === 'TUNING';
+            const isRunning = d.state === 'RUNNING';
+            const isPaused = d.state === 'PAUSED';
+            const isError = d.state === 'ERROR';
+            document.getElementById('btn-tune-start').disabled = isTuning || isRunning || isPaused || isError;
+            document.getElementById('btn-tune-stop').disabled = !isTuning;
+            document.getElementById('btn-start').disabled = isRunning || isTuning || isError;
+            document.getElementById('btn-pause').disabled = !isRunning;
+
+            // Timer
+            const t = d.timer || 0;
+            const m = Math.floor(t / 60).toString().padStart(2, '0');
+            const s = (t % 60).toString().padStart(2, '0');
+            document.getElementById('timer-lbl').innerText = (d.state === 'RUNNING' && d.step ? 'Step ' + d.step + ' ' : '') + m + ':' + s;
+
+            // Gauge
+            const pct = Math.min(d.ssr / 100, 1);
+            const angle = -Math.PI + (pct * Math.PI);
+            const x = 100 + 80 * Math.cos(angle);
+            const y = 90 + 80 * Math.sin(angle);
+            document.getElementById('gauge-arc').setAttribute('d', 'M20,90 A80,80 0 0,1 ' + x + ',' + y);
+            
+            // Update PID inputs only on load or if Autotune just finished
+            if(d.pid && (!pidLoaded || (lastState === 'TUNING' && d.state === 'IDLE'))) {
+                document.getElementById('in-kp').value = d.pid.kp;
+                document.getElementById('in-ki').value = d.pid.ki;
+                document.getElementById('in-kd').value = d.pid.kd;
+                document.getElementById('in-ib').value = d.pid.ib;
+                document.getElementById('in-df').value = d.pid.df;
+                pidLoaded = true;
+            }
+            lastState = d.state;
+        }
+
+        // Chart Logic
+        const ctx = document.getElementById('chart').getContext('2d');
+        const history = [];
+        let maxPts = 36000;
+        let chartMin = 0, chartMax = 250;
+        
+        function resizeChart() {
+            ctx.canvas.width = ctx.canvas.clientWidth;
+            ctx.canvas.height = ctx.canvas.clientHeight;
+        }
+        window.addEventListener('resize', resizeChart);
+        resizeChart();
+
+        function setMaxPts(v) {
+            maxPts = parseInt(v);
+            if(history.length > maxPts) history.splice(0, history.length - maxPts);
+            drawChart();
+        }
+
+        function clearChart() {
+            history.length = 0;
+            resetChartScale();
+            document.getElementById('chart-hist').value = "36000";
+            maxPts = 36000;
+            drawChart();
+        }
+
+        function downloadCSV() {
+            if(history.length === 0) return alert("No data to export");
+            let csv = "Time,Temperature,Setpoint,SSR\n";
+            history.forEach(p => {
+                csv += `${new Date(p.t).toISOString()},${p.temp.toFixed(2)},${p.set.toFixed(2)},${p.ssr.toFixed(0)}\n`;
+            });
+            const blob = new Blob([csv], {type: 'text/csv'});
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'pid_log.csv';
+            a.click();
+            window.URL.revokeObjectURL(url);
+        }
+
+        function updateChart(d) {
+            history.push({t: Date.now(), temp: d.temp, set: d.set, ssr: d.ssr});
+            if(history.length > maxPts) history.shift();
+            chartMin = Math.min(chartMin, d.temp, d.set);
+            chartMax = Math.max(chartMax, d.temp, d.set);
+            drawChart();
+        }
+
+        function drawChart() {
+            const w = ctx.canvas.width;
+            const h = ctx.canvas.height;
+            ctx.clearRect(0,0,w,h);
+            
+            if(history.length < 2) return;
+
+            const pL = 40, pR = 10, pT = 20, pB = 20;
+            const gW = w - pL - pR;
+            const gH = h - pT - pB;
+
+            let min = chartMin;
+            let max = chartMax;
+            if(max - min < 10) { max += 5; min -= 5; }
+            const range = max - min;
+            const sY = gH / range;
+
+            const startTime = history[0].t;
+            const endTime = history[history.length-1].t;
+            const duration = endTime - startTime || 1;
+
+            const getX = t => pL + ((t - startTime) / duration) * gW;
+            const getY = v => pT + gH - (v - min) * sY;
+
+            // Axes
+            ctx.strokeStyle = '#555';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(pL, pT); ctx.lineTo(pL, h - pB); ctx.lineTo(w - pR, h - pB);
+            ctx.stroke();
+
+            // X-Axis Grid & Labels (Time)
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = '#aaa';
+            ctx.font = '10px monospace';
+            
+            let step = 10000; // 10s
+            if (duration > 3600000) step = 600000; // 10m
+            else if (duration > 900000) step = 300000; // 5m
+            else if (duration > 300000) step = 60000; // 1m
+            else if (duration > 60000) step = 30000; // 30s
+            
+            ctx.beginPath();
+            for (let t = 0; t <= duration; t += step) {
+                const x = pL + (t / duration) * gW;
+                ctx.moveTo(x, pT);
+                ctx.lineTo(x, h - pB);
+                const totalSec = Math.floor(t / 1000);
+                const m = Math.floor(totalSec / 60);
+                const s = totalSec % 60;
+                ctx.fillText(`${m}:${s.toString().padStart(2,'0')}`, x, h - pB + 2);
+            }
+            ctx.strokeStyle = '#333';
+            ctx.stroke();
+
+            // Y-Axis Labels
+            ctx.fillStyle = '#aaa';
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'middle';
+            ctx.font = '10px monospace';
+            for(let i=0; i<=5; i++) {
+                const val = min + (range * i / 5);
+                const y = getY(val);
+                ctx.fillText(val.toFixed(0), pL - 5, y);
+                ctx.beginPath(); ctx.moveTo(pL, y); ctx.lineTo(pL+5, y); ctx.stroke();
+            }
+
+            // Draw SSR (Area)
+            ctx.fillStyle = 'rgba(255, 0, 85, 0.15)';
+            ctx.beginPath();
+            ctx.moveTo(pL, h - pB);
+            history.forEach((p, i) => {
+                ctx.lineTo(getX(p.t), pT + gH - (p.ssr/100) * gH);
+            });
+            ctx.lineTo(getX(history[history.length-1].t), h - pB);
+            ctx.fill();
+
+            // Lines
+            const line = (k, c) => {
+                ctx.strokeStyle = c;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                history.forEach((p, i) => {
+                    if(i===0) ctx.moveTo(getX(p.t), getY(p[k]));
+                    else ctx.lineTo(getX(p.t), getY(p[k]));
+                });
+                ctx.stroke();
+            };
+            line('set', '#ffbd00');
+            line('temp', '#00ff9d');
+
+            // Legend
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            const leg = (t, c, x) => {
+                ctx.fillStyle = c;
+                ctx.fillRect(x, 5, 10, 10);
+                ctx.fillStyle = '#ccc';
+                ctx.fillText(t, x + 15, 5);
+            };
+            leg('Temp', '#00ff9d', pL + 10);
+            leg('Set', '#ffbd00', pL + 70);
+            leg('SSR', 'rgba(255, 0, 85, 0.5)', pL + 130);
+        }
+
+        setInterval(() => {
+            if(!isScanning && Date.now() - lastMsg > 10000) document.getElementById('overlay').style.display = 'flex';
+        }, 1000);
+
+        applyInitialTheme();
+        connect();
+    </script>
+</body>
+</html>
