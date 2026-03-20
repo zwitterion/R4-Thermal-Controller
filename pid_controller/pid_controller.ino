@@ -15,7 +15,7 @@
 // --- Configuration ---
 #define PIN_SENSOR 2
 #define PIN_SSR 3
-#define PIN_MAX_CS 10
+#define PIN_MAX_CS 8
 
 // Helper to estimate free RAM on RA4M1
 extern "C" char *sbrk(int i);
