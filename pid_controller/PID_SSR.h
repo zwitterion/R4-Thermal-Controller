@@ -41,6 +41,11 @@ public:
         processSSRSmoothing(now);
     }
 
+    void manualUpdate(double powerPct) {
+        output = constrain(powerPct, 0.0, 100.0);
+        processSSRSmoothing(millis());
+    }
+
     void startAutotune(double target) {
         setpoint = target;
         isTuning = true;

@@ -37,8 +37,10 @@ PID_SSR pid(PIN_SSR);
 ProfileEngine profile;
 
 // --- State Machine ---
-enum SystemState { STATE_IDLE, STATE_RUNNING, STATE_PAUSED, STATE_TUNING, STATE_ERROR };
+enum SystemState { STATE_IDLE, STATE_RUNNING, STATE_PAUSED, STATE_TUNING, STATE_ERROR, STATE_MANUAL };
 SystemState currentState = STATE_IDLE;
+float manualPower = 0.0;
+bool manualHeaterOn = false;
 
 // --- Timers ---
 unsigned long lastTelemetry = 0;
@@ -66,6 +68,7 @@ void updateLEDMatrix() {
     switch(currentState) {
         case STATE_RUNNING: matrix.loadFrame(icon_heat); break;
         case STATE_ERROR:   matrix.loadFrame(icon_err); break;
+        case STATE_MANUAL:  matrix.loadFrame(manualHeaterOn ? icon_heat : icon_idle); break;
         default:            matrix.loadFrame(icon_idle); break;
     }
 }
@@ -94,6 +97,7 @@ void sendTelemetry() {
     else if (currentState == STATE_PAUSED) stateStr = "PAUSED";
     else if (currentState == STATE_TUNING) stateStr = "TUNING";
     else if (currentState == STATE_ERROR) stateStr = "ERROR";
+    else if (currentState == STATE_MANUAL) stateStr = "MANUAL";
     json += "\"state\":\"" + stateStr + "\"";
     
     // Send PID values occasionally
@@ -105,6 +109,12 @@ void sendTelemetry() {
         json += "\"ib\":" + String(pid.integralSeparationBand, 1) + ",";
         json += "\"df\":" + String(pid.dFilter, 2) + "}";
     }
+
+    if (currentState == STATE_MANUAL) {
+        json += ",\"man_on\":" + String(manualHeaterOn ? 1 : 0);
+        json += ",\"man_pwr\":" + String(manualPower, 0);
+    }
+
     json += "}";
     
     wsServer.broadcast(json);
@@ -314,6 +324,30 @@ void loop() {
                         currentState = STATE_TUNING;
                         pid.startAutotune(100.0);
                         LOG_INFO("API: Autotune");
+                    }
+                } else if (body.indexOf("manual_mode") > 0) {
+                    int valIdx = body.indexOf("\"val\":");
+                    if (valIdx > 0) {
+                        int v = body.substring(valIdx + 6).toInt();
+                        if (v == 1) {
+                            currentState = STATE_MANUAL;
+                            LOG_INFO("API: Manual Mode ON");
+                        } else {
+                            currentState = STATE_IDLE;
+                            pid.output = 0;
+                            LOG_INFO("API: Manual Mode OFF");
+                        }
+                    }
+                } else if (body.indexOf("manual_pwr") > 0) {
+                    int valIdx = body.indexOf("\"val\":");
+                    if (valIdx > 0) {
+                        manualPower = body.substring(valIdx + 6).toFloat();
+                    }
+                } else if (body.indexOf("manual_state") > 0) {
+                    int valIdx = body.indexOf("\"val\":");
+                    if (valIdx > 0) {
+                        manualHeaterOn = (body.substring(valIdx + 6).toInt() == 1);
+                        LOG_VAR("API: Manual Heater", manualHeaterOn);
                     }
                 } else if (body.indexOf("reset") > 0) {
                     if (currentState == STATE_IDLE) {
@@ -538,6 +572,10 @@ void loop() {
             memory.data.pid = {pid.kp, pid.ki, pid.kd, pid.integralSeparationBand, pid.dFilter};
             memory.save();
         }
+    } else if (currentState == STATE_MANUAL) {
+        // Manual Control
+        pid.manualUpdate(manualHeaterOn ? manualPower : 0.0);
+        pid.setpoint = 0; 
     } else {
         pid.output = 0;
         digitalWrite(PIN_SSR, LOW); // Hard safety

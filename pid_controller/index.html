@@ -19,6 +19,7 @@
         button.danger:active { background: var(--danger); color: #fff; }
         button:disabled { border-color: var(--dim); color: var(--dim); cursor: not-allowed; }
         input { background: var(--input-bg); border: 1px solid var(--dim); color: var(--text); padding: 8px; width: 60px; font-family: inherit; }
+        input[type=range] { width: 100%; padding: 0; margin: 10px 0; cursor: pointer; }
         .gauge-container { position: relative; height: 150px; width: 100%; }
         svg { width: 100%; height: 100%; }
         .status-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: var(--panel); border-top: 1px solid var(--dim); padding: 5px; text-align: center; font-size: 0.8rem; }
@@ -76,12 +77,25 @@
         </div>
 
         <div class="card">
-            <h2>Controls</h2>
-            <div class="row">
-                <button onclick="send('start')" id="btn-start" data-tooltip="Start Profile">Start</button>
-                <button onclick="send('pause')" id="btn-pause" data-tooltip="Pause/Resume">Pause</button>
+            <div class="row" style="margin-bottom:10px">
+                <h2 style="border:none;margin:0">Controls</h2>
+                <div style="display:flex;background:var(--input-bg);border:1px solid var(--dim);border-radius:4px;overflow:hidden">
+                    <button id="tab-auto" onclick="switchTab('auto')" style="border:none;width:auto;padding:5px 10px;font-size:0.8rem;background:var(--primary);color:#000;margin:0">Auto</button>
+                    <button id="tab-man" onclick="switchTab('man')" style="border:none;width:auto;padding:5px 10px;font-size:0.8rem;color:var(--text);margin:0">Manual</button>
+                </div>
             </div>
-            <button class="danger" onclick="send('stop')" data-tooltip="Stop & Reset">STOP / RESET</button>
+            <div id="view-auto">
+                <div class="row">
+                    <button onclick="send('start')" id="btn-start" data-tooltip="Start Profile">Start</button>
+                    <button onclick="send('pause')" id="btn-pause" data-tooltip="Pause/Resume">Pause</button>
+                </div>
+                <button class="danger" onclick="send('stop')" data-tooltip="Stop & Reset">STOP / RESET</button>
+            </div>
+            <div id="view-man" style="display:none">
+                <div class="row"><span class="label">Power</span><span class="label"><span id="lbl-man-pwr">0</span>%</span></div>
+                <input type="range" id="in-man-pwr" min="0" max="100" value="0" oninput="updateManPwr(this.value)">
+                <button id="btn-man-onoff" onclick="toggleManHeater()">TURN ON</button>
+            </div>
         </div>
 
         <div class="card">
@@ -691,6 +705,17 @@
                 document.getElementById('in-df').value = d.pid.df;
                 pidLoaded = true;
             }
+            
+            // Manual Sync
+            if (d.man_on !== undefined) {
+                const btn = document.getElementById('btn-man-onoff');
+                if (d.man_on) {
+                    btn.innerText = "TURN OFF"; btn.classList.add('danger');
+                } else {
+                    btn.innerText = "TURN ON"; btn.classList.remove('danger');
+                }
+            }
+            
             lastState = d.state;
         }
 
@@ -848,6 +873,38 @@
             leg('Temp', '#00ff9d', pL + 10);
             leg('Set', '#ffbd00', pL + 70);
             leg('SSR', 'rgba(255, 0, 85, 0.5)', pL + 130);
+        }
+
+        function switchTab(mode) {
+            const autoBtn = document.getElementById('tab-auto');
+            const manBtn = document.getElementById('tab-man');
+            const autoView = document.getElementById('view-auto');
+            const manView = document.getElementById('view-man');
+            if(mode === 'auto') {
+                autoBtn.style.background = 'var(--primary)'; autoBtn.style.color = '#000';
+                manBtn.style.background = 'transparent'; manBtn.style.color = 'var(--text)';
+                autoView.style.display = 'block'; manView.style.display = 'none';
+                if(lastState === 'MANUAL') send('manual_mode', 0);
+            } else {
+                manBtn.style.background = 'var(--primary)'; manBtn.style.color = '#000';
+                autoBtn.style.background = 'transparent'; autoBtn.style.color = 'var(--text)';
+                manView.style.display = 'block'; autoView.style.display = 'none';
+                send('manual_mode', 1);
+            }
+        }
+        function toggleManHeater() {
+            const btn = document.getElementById('btn-man-onoff');
+            const turningOn = (btn.innerText === "TURN ON");
+            send('manual_state', turningOn ? 1 : 0);
+        }
+        
+        let pwrTimeout;
+        function updateManPwr(val) { 
+            document.getElementById('lbl-man-pwr').innerText = val; 
+            clearTimeout(pwrTimeout);
+            pwrTimeout = setTimeout(() => {
+                send('manual_pwr', parseInt(val));
+            }, 250);
         }
 
         setInterval(() => {
