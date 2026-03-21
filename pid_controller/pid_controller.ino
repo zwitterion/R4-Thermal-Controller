@@ -45,6 +45,7 @@ bool manualHeaterOn = false;
 // --- Timers ---
 unsigned long lastTelemetry = 0;
 unsigned long lastTempRead = 0;
+bool firstReading = true;
 float currentTemp = 0.0;
 
 // --- LED Matrix Frames (8x12) ---
@@ -546,7 +547,13 @@ void loop() {
             pid.output = 0;
             LOG_ERROR("Sensor Fault or Overheat!");
         } else {
-            currentTemp = t;
+            if (firstReading) {
+                currentTemp = t;
+                firstReading = false;
+            } else {
+                currentTemp = (0.3 * t) + (0.7 * currentTemp); // EMA Smoothing (Alpha 0.3)
+            }
+            
             if (currentTemp > memory.data.safetyLimit) {
                 currentState = STATE_ERROR;
                 pid.output = 0;
