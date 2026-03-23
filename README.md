@@ -35,6 +35,14 @@ A robust, web-based PID temperature controller designed for the **Arduino UNO R4
     *   **Option B**: MAX31856 Thermocouple Amplifier + K-Type Thermocouple.
 *   **Heating Element**: Oven, Hot plate, etc.
 
+## 🧱 Enclosure for the Hardware
+
+A complete 3D‑printed enclosure designed specifically for this controller is available on Printables.  
+It includes mounting points for the Arduino UNO R4 WiFi, SSR, and provides clean cable routing.
+
+**Download the enclosure here:**  
+https://www.printables.com/model/1648096-advanced-temperature-controller
+
 ### Wiring
 
 ![Wiring Diagram](wiring_diagram_DS18B20.png)
