@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <WiFiS3.h>
+#include <WiFiUdp.h>
+#include <ArduinoMDNS.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <ArduinoGraphics.h>
@@ -15,7 +17,7 @@
 // --- Configuration ---
 #define PIN_SENSOR 2
 #define PIN_SSR 3
-#define PIN_MAX_CS 8
+#define PIN_MAX_CS 10 // 8
 
 // Helper to estimate free RAM on RA4M1
 extern "C" char *sbrk(int i);
@@ -31,6 +33,8 @@ Adafruit_MAX31856 maxthermo(PIN_MAX_CS);
 ArduinoLEDMatrix matrix;
 WiFiServer webServer(80);
 SimpleWS::WebSocketServer wsServer(81);
+WiFiUDP udp;
+MDNS mdns(udp);
 
 EEPROMManager memory;
 PID_SSR pid(PIN_SSR);
@@ -185,6 +189,12 @@ void setup() {
             }
             
             LOG_VAR("STA IP", WiFi.localIP());
+
+            if (mdns.begin(WiFi.localIP(), memory.data.hostname)) {
+                String svc = String(memory.data.hostname) + "._http";
+                mdns.addServiceRecord(svc.c_str(), 80, MDNSServiceTCP);
+                LOG_INFO("mDNS started");
+            }
         } else {
             LOG_WARN("\nWiFi Connection Failed. Using AP only.");
             // Scroll AP IP on failure so user knows where to connect
@@ -204,6 +214,7 @@ void setup() {
 
 void loop() {
     unsigned long now = millis();
+    mdns.run();
 
     // 1. WebSocket Handling
     wsServer.poll();
@@ -291,6 +302,9 @@ void loop() {
             client.print(memory.data.wifiSSID);
             client.print("\",\"safety\":");
             client.print(memory.data.safetyLimit, 1);
+            client.print(",\"hostname\":\"");
+            client.print(memory.data.hostname);
+            client.print("\"");
             client.println("}");
         }
         else if (method == "POST") {
@@ -370,6 +384,7 @@ void loop() {
             } else if (path == "/api/wifi") {
                 int ssidIdx = body.indexOf("\"ssid\":");
                 int passIdx = body.indexOf("\"pass\":");
+                int hostIdx = body.indexOf("\"host\":");
                 if (ssidIdx > 0) {
                     int start = body.indexOf("\"", ssidIdx + 7) + 1;
                     int end = body.indexOf("\"", start);
@@ -381,11 +396,20 @@ void loop() {
                         end = body.indexOf("\"", start);
                         p = body.substring(start, end);
                     }
+
+                    String h = "r4-controller";
+                    if (hostIdx > 0) {
+                        start = body.indexOf("\"", hostIdx + 7) + 1;
+                        end = body.indexOf("\"", start);
+                        h = body.substring(start, end);
+                    }
                     
                     strncpy(memory.data.wifiSSID, s.c_str(), 31);
                     memory.data.wifiSSID[31] = 0;
                     strncpy(memory.data.wifiPass, p.c_str(), 63);
                     memory.data.wifiPass[63] = 0;
+                    strncpy(memory.data.hostname, h.c_str(), 31);
+                    memory.data.hostname[31] = 0;
                     memory.save();
                     LOG_INFO("API: WiFi Saved. Rebooting...");
                     

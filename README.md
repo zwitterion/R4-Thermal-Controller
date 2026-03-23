@@ -16,6 +16,7 @@ A robust, web-based PID temperature controller designed for the **Arduino UNO R4
 *   **Dual Sensor Support**: Supports **DS18B20** (OneWire) and **MAX31856** (Thermocouple) sensors.
 *   **Connectivity**:
     *   **Dual Mode**: Works as a WiFi Access Point (AP) and connects to an existing WiFi network simultaneously.
+    *   **mDNS**: Access via hostname (e.g., `http://r4-controller.local`) without needing the IP address.
     *   **WebSockets**: Fast, low-latency telemetry and control.
 *   **Data Persistence**: Saves PID settings, profiles, and WiFi credentials to EEPROM.
 *   **Safety**: Configurable hard safety temperature limit.
@@ -82,9 +83,11 @@ pip install minify-html
 ### 1. Initial Setup (WiFi)
 1.  Power on the controller.
 2.  Connect your phone or laptop to the WiFi network named **`R4-Controller`**.
-3.  Open a browser and navigate to `http://192.168.4.1`.
-4.  Go to the **Network** card, enter your home WiFi SSID and Password, and click **Save & Reboot**.
-5.  The controller will now connect to your home WiFi (displaying the IP on the Serial Monitor and LED the Matrix dsiplay) but the AP remains active as a fallback.
+3.  Open a browser and navigate to `http://192.168.4.1` or `http://r4-controller.local`.
+4.  Go to the **Network** card and enter your home WiFi SSID and Password.
+5.  **Hostname**: You can optionally change the hostname (default: `r4-controller`) to customize the URL (e.g., `http://my-oven.local`).
+6.  Click **Save & Reboot**.
+7.  The controller will now connect to your home WiFi (displaying the IP on the Serial Monitor and LED the Matrix dsiplay) but the AP remains active as a fallback.
 
 ### 2. Sensor Configuration
 1.  In the Web UI, scroll down to the **System** card.

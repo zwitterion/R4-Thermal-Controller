@@ -43,6 +43,7 @@ struct __attribute__((packed)) SystemData {
     Profile profiles[MAX_PROFILES];
     char wifiSSID[32];
     char wifiPass[64];
+    char hostname[32];
     uint8_t sensorType; // 0=DS18B20, 1=MAX31856
     uint8_t tcType;     // 0=B, 1=E, 2=J, 3=K, 4=N, 5=R, 6=S, 7=T
     float safetyLimit;
@@ -109,6 +110,7 @@ public:
         }
         data.wifiSSID[0] = 0;
         data.wifiPass[0] = 0;
+        strcpy(data.hostname, "r4-controller");
         data.sensorType = 0; // Default DS18B20
         data.tcType = 3;     // Default Type K
         data.safetyLimit = 250.0; // Default Safety Limit
