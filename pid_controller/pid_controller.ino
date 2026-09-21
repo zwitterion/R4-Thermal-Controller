@@ -4,8 +4,6 @@
 #include <ArduinoMDNS.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
-#include <ArduinoGraphics.h>
-#include <Arduino_LED_Matrix.h>
 #include <Adafruit_MAX31856.h>
 #include "DebugLogger.h"
 #include "EEPROM_Manager.h"
@@ -30,7 +28,6 @@ int getFreeRam() {
 OneWire oneWire(PIN_SENSOR);
 DallasTemperature sensors(&oneWire);
 Adafruit_MAX31856 maxthermo(PIN_MAX_CS);
-ArduinoLEDMatrix matrix;
 WiFiServer webServer(80);
 SimpleWS::WebSocketServer wsServer(81);
 WiFiUDP udp;
@@ -52,31 +49,6 @@ unsigned long lastTempRead = 0;
 bool firstReading = true;
 float currentTemp = 0.0;
 
-// --- LED Matrix Frames (8x12) ---
-const uint32_t icon_heat[] = { 0x3184a2, 0x94a529, 0x4a5294 }; // Flame-ish
-const uint32_t icon_idle[] = { 0x000000, 0x000000, 0x0000ff }; // Dot
-const uint32_t icon_err[]  = { 0x909000, 0x090900, 0x009090 }; // X
-
-// Helper to scroll text on LED Matrix
-void scrollText(String text) {
-    matrix.beginDraw();
-    matrix.stroke(0xFFFFFFFF);
-    matrix.textScrollSpeed(50);
-    matrix.textFont(Font_5x7);
-    matrix.beginText(0, 1, 0xFFFFFF);
-    matrix.println(text);
-    matrix.endText(SCROLL_LEFT);
-    matrix.endDraw();
-}
-
-void updateLEDMatrix() {
-    switch(currentState) {
-        case STATE_RUNNING: matrix.loadFrame(icon_heat); break;
-        case STATE_ERROR:   matrix.loadFrame(icon_err); break;
-        case STATE_MANUAL:  matrix.loadFrame(manualHeaterOn ? icon_heat : icon_idle); break;
-        default:            matrix.loadFrame(icon_idle); break;
-    }
-}
 
 void sendTelemetry() {
     static SystemState previousStateForTelemetry = currentState;
@@ -131,7 +103,6 @@ void setup() {
     LOG_INIT(115200);
     LOG_INFO("Booting R4 Thermal Controller...");
 
-    matrix.begin();
     memory.begin();
     
     // Init PID
@@ -197,15 +168,9 @@ void setup() {
             }
         } else {
             LOG_WARN("\nWiFi Connection Failed. Using AP only.");
-            // Scroll AP IP on failure so user knows where to connect
-            IPAddress ip = WiFi.localIP(); // In AP mode, localIP returns AP IP
-            scrollText("AP: " + String(ip[0]) + "." + String(ip[1]) + "." + String(ip[2]) + "." + String(ip[3]));
         }
     } else {
         LOG_INFO("No WiFi configured. Using AP only.");
-        // Scroll AP IP if unconfigured
-        IPAddress ip = WiFi.localIP();
-        scrollText("AP: " + String(ip[0]) + "." + String(ip[1]) + "." + String(ip[2]) + "." + String(ip[3]));
     }
 
     webServer.begin();
@@ -615,7 +580,6 @@ void loop() {
     // 6. Telemetry & UI
     if (now - lastTelemetry > 500) { // 2Hz UI update
         sendTelemetry();
-        updateLEDMatrix();
         lastTelemetry = now;
     }
     

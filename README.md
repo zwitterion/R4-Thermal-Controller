@@ -64,8 +64,6 @@ You need to install the following libraries via the Arduino Library Manager:
 1.  **OneWire**
 2.  **DallasTemperature**
 3.  **Adafruit MAX31856**
-4.  **ArduinoGraphics** (Standard R4 library)
-5.  **Arduino_LED_Matrix** (Standard R4 library)
 
 ### Python Tools (For Development)
 If you plan to modify the `index.html` web interface, you will need Python installed to regenerate the embedded assets.
@@ -95,7 +93,7 @@ pip install minify-html
 4.  Go to the **Network** card and enter your home WiFi SSID and Password.
 5.  **Hostname**: You can optionally change the hostname (default: `r4-controller`) to customize the URL (e.g., `http://my-oven.local`).
 6.  Click **Save & Reboot**.
-7.  The controller will now connect to your home WiFi (displaying the IP on the Serial Monitor and LED the Matrix dsiplay) but the AP remains active as a fallback.
+7.  The controller will now connect to your home WiFi (displaying the IP on the Serial Monitor) but the AP remains active as a fallback.
 
 ### 2. Sensor Configuration
 1.  In the Web UI, scroll down to the **System** card.
