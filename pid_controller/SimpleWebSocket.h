@@ -96,20 +96,33 @@ public:
 
     void onMessage(MsgCallback cb) { callback = cb; }
 
-    void broadcast(String msg) {
+    void broadcast(const char* txt) {
         for (int i = 0; i < MAX_WS_CLIENTS; i++) {
-            if (clients[i] && clients[i].connected()) {
-                sendFrame(clients[i], msg);
+            if (clients[i]) {
+                if (clients[i].connected()) {
+                    if (!sendFrame(clients[i], txt)) {
+                        clients[i].stop();
+                        clients[i] = WiFiClient();
+                    }
+                } else {
+                    clients[i].stop();
+                    clients[i] = WiFiClient();
+                }
             }
         }
     }
 
+    void broadcast(const String& msg) {
+        broadcast(msg.c_str());
+    }
+
     void poll() {
+        cleanupDisconnectedClients();
+
         // Handle new clients
         WiFiClient newClient = server.available();
         if (newClient) {
             int freeIdx = -1;
-            // Find free slot
             for (int i = 0; i < MAX_WS_CLIENTS; i++) {
                 if (!clients[i] || !clients[i].connected()) {
                     freeIdx = i;
@@ -118,9 +131,12 @@ public:
             }
 
             if (freeIdx != -1) {
-                if (clients[freeIdx]) clients[freeIdx].stop(); // Clean up
+                if (clients[freeIdx]) clients[freeIdx].stop();
                 clients[freeIdx] = newClient;
-                if (!doHandshake(clients[freeIdx])) clients[freeIdx].stop();
+                if (!doHandshake(clients[freeIdx])) {
+                    clients[freeIdx].stop();
+                    clients[freeIdx] = WiFiClient();
+                }
             } else {
                 newClient.stop(); // Server full
             }
@@ -139,12 +155,21 @@ private:
     WiFiClient clients[MAX_WS_CLIENTS];
     MsgCallback callback = nullptr;
 
+    void cleanupDisconnectedClients() {
+        for (int i = 0; i < MAX_WS_CLIENTS; i++) {
+            if (clients[i] && !clients[i].connected()) {
+                clients[i].stop();
+                clients[i] = WiFiClient();
+            }
+        }
+    }
+
     // Helper to read N bytes with timeout
     bool readBytes(WiFiClient& client, uint8_t* buf, size_t size) {
         for (size_t i = 0; i < size; i++) {
             unsigned long start = millis();
             while (client.available() == 0) {
-                if (millis() - start > 1000) return false; // 1s timeout per byte
+                if (millis() - start > 400) return false; // 400ms timeout per byte
                 if (!client.connected()) return false;
                 delay(1);
             }
@@ -158,15 +183,20 @@ private:
     bool doHandshake(WiFiClient& client) {
         String key = "";
         unsigned long start = millis();
-        while (client.connected() && millis() - start < 5000) {
+        client.setTimeout(200);
+        while (client.connected() && millis() - start < 1500) {
             if (client.available()) {
                 String line = client.readStringUntil('\n');
                 line.trim();
-                if (line.startsWith("Sec-WebSocket-Key:")) key = line.substring(18);
-                if (line.length() == 0) break;
+                if (line.startsWith("Sec-WebSocket-Key:")) {
+                    key = line.substring(18);
+                    key.trim();
+                }
+                if (line.length() == 0 && key.length() > 0) break;
+            } else {
+                delay(10);
             }
         }
-        key.trim();
         if (key.length() > 0) {
             client.print("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ");
             client.println(Crypto::createAcceptKey(key));
@@ -176,18 +206,38 @@ private:
         return false;
     }
 
-    void sendFrame(WiFiClient& client, String txt) {
-        client.write(0x81);
-        size_t len = txt.length();
-        if (len <= 125) {
-            client.write((uint8_t)len);
-        } else {
-            client.write(126);
-            client.write((uint8_t)(len >> 8));
-            client.write((uint8_t)(len & 0xFF));
+    bool sendPong(WiFiClient& client, const uint8_t* payload, size_t len) {
+        if (!client.connected()) return false;
+        uint8_t header[2];
+        header[0] = 0x8A; // Pong frame (Fin=1, Opcode=0xA)
+        header[1] = (uint8_t)(len & 0x7F); // Pings are control frames, len <= 125
+        if (client.write(header, 2) != 2) return false;
+        if (len > 0 && payload != nullptr) {
+            if (client.write(payload, len) != len) return false;
         }
-        client.print(txt);
-        client.flush();
+        return true;
+    }
+
+    bool sendFrame(WiFiClient& client, const char* txt) {
+        if (!client.connected()) return false;
+        size_t len = strlen(txt);
+        uint8_t header[4];
+        size_t headerLen = 0;
+        header[0] = 0x81; // Text frame, fin = 1
+        if (len <= 125) {
+            header[1] = (uint8_t)len;
+            headerLen = 2;
+        } else {
+            header[1] = 126;
+            header[2] = (uint8_t)(len >> 8);
+            header[3] = (uint8_t)(len & 0xFF);
+            headerLen = 4;
+        }
+        if (client.write(header, headerLen) != headerLen) return false;
+        if (len > 0) {
+            if (client.write((const uint8_t*)txt, len) != len) return false;
+        }
+        return true;
     }
 
     void readFrame(WiFiClient& client) {
@@ -213,6 +263,26 @@ private:
         uint8_t mask[4] = {0};
         if (masked) {
             if (!readBytes(client, mask, 4)) { client.stop(); return; }
+        }
+
+        // Handle Ping (Opcode 0x9)
+        if (opcode == 0x9) {
+            uint8_t pingPayload[128];
+            size_t pingLen = (len < 128) ? (size_t)len : 125;
+            if (pingLen > 0) {
+                if (!readBytes(client, pingPayload, pingLen)) { client.stop(); return; }
+                if (masked) {
+                    for (size_t i = 0; i < pingLen; i++) pingPayload[i] ^= mask[i % 4];
+                }
+            }
+            sendPong(client, pingPayload, pingLen);
+            return;
+        } else if (opcode == 0xA) {
+            // Pong received: discard payload
+            for (size_t i = 0; i < len; i++) {
+                if (client.read() < 0) break;
+            }
+            return;
         }
 
         String payload = "";

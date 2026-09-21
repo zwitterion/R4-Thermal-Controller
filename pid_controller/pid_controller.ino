@@ -43,11 +43,14 @@ SystemState currentState = STATE_IDLE;
 float manualPower = 0.0;
 bool manualHeaterOn = false;
 
-// --- Timers ---
+// --- Timers & WiFi Status ---
 unsigned long lastTelemetry = 0;
 unsigned long lastTempRead = 0;
 bool firstReading = true;
 float currentTemp = 0.0;
+bool isApMode = false;
+unsigned long lastWifiCheck = 0;
+unsigned long lastMdnsRun = 0;
 
 
 void sendTelemetry() {
@@ -59,42 +62,46 @@ void sendTelemetry() {
     bool autotuneJustFinished = (previousStateForTelemetry == STATE_TUNING && currentState == STATE_IDLE);
     bool sendPid = autotuneJustFinished || (reportCount % 10 == 0);
 
-    // Broadcast JSON
-    String json;
-    json.reserve(256); // Prevent heap fragmentation
-    json = "{";
-    json += "\"temp\":" + String(currentTemp, 1) + ",";
-    json += "\"set\":" + String(pid.setpoint, 1) + ",";
-    json += "\"ssr\":" + String(pid.output, 0) + ",";
-    json += "\"timer\":" + String(profile.getTimeRemaining()) + ",";
-    json += "\"step\":" + String(profile.currentStepIndex + 1) + ",";
-    
-    String stateStr = "IDLE";
+    const char* stateStr = "IDLE";
     if (currentState == STATE_RUNNING) stateStr = "RUNNING";
     else if (currentState == STATE_PAUSED) stateStr = "PAUSED";
     else if (currentState == STATE_TUNING) stateStr = "TUNING";
     else if (currentState == STATE_ERROR) stateStr = "ERROR";
     else if (currentState == STATE_MANUAL) stateStr = "MANUAL";
-    json += "\"state\":\"" + stateStr + "\"";
-    
-    // Send PID values occasionally
-    if (sendPid) {
-        json += ",\"pid\":{";
-        json += "\"kp\":" + String(pid.kp, 2) + ",";
-        json += "\"ki\":" + String(pid.ki, 2) + ",";
-        json += "\"kd\":" + String(pid.kd, 2) + ",";
-        json += "\"ib\":" + String(pid.integralSeparationBand, 1) + ",";
-        json += "\"df\":" + String(pid.dFilter, 2) + "}";
+
+    // Zero-heap stack buffer for JSON telemetry
+    char jsonBuf[384];
+    int len = snprintf(jsonBuf, sizeof(jsonBuf),
+        "{\"temp\":%.1f,\"set\":%.1f,\"ssr\":%.0f,\"timer\":%lu,\"step\":%d,\"state\":\"%s\"",
+        currentTemp,
+        pid.setpoint,
+        pid.output,
+        profile.getTimeRemaining(),
+        profile.currentStepIndex + 1,
+        stateStr
+    );
+
+    if (sendPid && len > 0 && len < (int)sizeof(jsonBuf) - 100) {
+        len += snprintf(jsonBuf + len, sizeof(jsonBuf) - len,
+            ",\"pid\":{\"kp\":%.2f,\"ki\":%.2f,\"kd\":%.2f,\"ib\":%.1f,\"df\":%.2f}",
+            pid.kp, pid.ki, pid.kd, pid.integralSeparationBand, pid.dFilter
+        );
     }
 
-    if (currentState == STATE_MANUAL) {
-        json += ",\"man_on\":" + String(manualHeaterOn ? 1 : 0);
-        json += ",\"man_pwr\":" + String(manualPower, 0);
+    if (currentState == STATE_MANUAL && len > 0 && len < (int)sizeof(jsonBuf) - 50) {
+        len += snprintf(jsonBuf + len, sizeof(jsonBuf) - len,
+            ",\"man_on\":%d,\"man_pwr\":%.0f",
+            manualHeaterOn ? 1 : 0,
+            manualPower
+        );
     }
 
-    json += "}";
-    
-    wsServer.broadcast(json);
+    if (len > 0 && len < (int)sizeof(jsonBuf) - 2) {
+        jsonBuf[len++] = '}';
+        jsonBuf[len] = '\0';
+    }
+
+    wsServer.broadcast(jsonBuf);
 
     previousStateForTelemetry = currentState;
 }
@@ -129,19 +136,16 @@ void setup() {
         while(true);
     }
     
-    // 1. Start Access Point (Always available for config)
-    LOG_INFO("Starting AP...");
-    WiFi.beginAP("R4-Controller"); 
-    LOG_VAR("AP IP", WiFi.localIP());
+    bool staConnected = false;
 
-    // 2. Try to connect to local WiFi if configured
+    // 1. Try to connect to local WiFi first if configured (avoid simultaneous AP+STA radio conflicts)
     if (strlen(memory.data.wifiSSID) > 0) {
         LOG_INFO("Connecting to WiFi...");
         LOG_VAR("SSID", memory.data.wifiSSID);
         
         WiFi.begin(memory.data.wifiSSID, memory.data.wifiPass);
         
-        // Wait up to 10 seconds for connection, but don't block forever
+        // Wait up to 10 seconds for connection
         unsigned long startAttempt = millis();
         while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 10000) {
             delay(500);
@@ -149,28 +153,43 @@ void setup() {
         }
         
         if (WiFi.status() == WL_CONNECTED) {
-            LOG_INFO("\nWiFi Connected.");
+            // Wait for valid IP from DHCP
             unsigned long startWait = millis();
             while (WiFi.localIP() == IPAddress(0, 0, 0, 0)) {
-            if (millis() - startWait > 15000) {
-                Serial.println("Error: Timeout obtaining IP");
-                break;
+                if (millis() - startWait > 10000) {
+                    Serial.println("\nError: Timeout obtaining IP");
+                    break;
                 }
                 delay(100);
             }
             
-            LOG_VAR("STA IP", WiFi.localIP());
+            if (WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
+                staConnected = true;
+                isApMode = false;
+                LOG_INFO("\nWiFi Connected.");
+                LOG_VAR("STA IP", WiFi.localIP());
 
-            if (mdns.begin(WiFi.localIP(), memory.data.hostname)) {
-                String svc = String(memory.data.hostname) + "._http";
-                mdns.addServiceRecord(svc.c_str(), 80, MDNSServiceTCP);
-                LOG_INFO("mDNS started");
+                if (mdns.begin(WiFi.localIP(), memory.data.hostname)) {
+                    String svc = String(memory.data.hostname) + "._http";
+                    mdns.addServiceRecord(svc.c_str(), 80, MDNSServiceTCP);
+                    LOG_INFO("mDNS started");
+                }
             }
-        } else {
-            LOG_WARN("\nWiFi Connection Failed. Using AP only.");
+        }
+        
+        if (!staConnected) {
+            LOG_WARN("\nWiFi Connection Failed. Falling back to AP mode.");
         }
     } else {
-        LOG_INFO("No WiFi configured. Using AP only.");
+        LOG_INFO("No WiFi configured. Starting AP mode.");
+    }
+
+    // 2. Start Access Point only if Station connection is not active
+    if (!staConnected) {
+        isApMode = true;
+        LOG_INFO("Starting AP...");
+        WiFi.beginAP("R4-Controller"); 
+        LOG_VAR("AP IP", WiFi.localIP());
     }
 
     webServer.begin();
@@ -179,7 +198,23 @@ void setup() {
 
 void loop() {
     unsigned long now = millis();
-    mdns.run();
+
+    // Throttled mDNS servicing (10Hz) to prevent bus saturation
+    if (!isApMode && now - lastMdnsRun >= 100) {
+        lastMdnsRun = now;
+        mdns.run();
+    }
+
+    // Non-blocking WiFi reconnect watchdog (Station mode only, check every 10s)
+    if (!isApMode && strlen(memory.data.wifiSSID) > 0) {
+        if (now - lastWifiCheck >= 10000) {
+            lastWifiCheck = now;
+            if (WiFi.status() != WL_CONNECTED) {
+                LOG_WARN("WiFi lost. Reconnecting...");
+                WiFi.begin(memory.data.wifiSSID, memory.data.wifiPass);
+            }
+        }
+    }
 
     // 1. WebSocket Handling
     wsServer.poll();
@@ -187,19 +222,27 @@ void loop() {
     // 2. Web Server (Serve Gzipped SPA)
     WiFiClient client = webServer.available();
     if (client) {
+        client.setTimeout(150); // Fast timeout to avoid stalling on speculative pre-connections
         String line = client.readStringUntil('\n');
         line.trim();
         
-        // Basic Request Parsing
-        String method = line.substring(0, line.indexOf(' '));
-        String path = line.substring(line.indexOf(' ') + 1);
-        path = path.substring(0, path.indexOf(' '));
+        if (line.length() > 0) {
+            // Basic Request Parsing
+            int firstSpace = line.indexOf(' ');
+            int secondSpace = line.indexOf(' ', firstSpace + 1);
+            String method = (firstSpace > 0) ? line.substring(0, firstSpace) : "";
+            String path = (firstSpace > 0 && secondSpace > firstSpace) ? line.substring(firstSpace + 1, secondSpace) : "/";
 
-        // Skip Headers
-        while (client.available()) {
-            String header = client.readStringUntil('\n');
-            if (header == "\r") break;
-        }
+            // Skip and parse Headers
+            int contentLength = 0;
+            while (client.connected()) {
+                String header = client.readStringUntil('\n');
+                header.trim();
+                if (header.length() == 0) break; // Empty line ends HTTP headers
+                if (header.startsWith("Content-Length:") || header.startsWith("content-length:")) {
+                    contentLength = header.substring(15).toInt();
+                }
+            }
 
         if (method == "GET" && path == "/") {
             client.println("HTTP/1.1 200 OK");
@@ -273,7 +316,23 @@ void loop() {
             client.println("}");
         }
         else if (method == "POST") {
-            String body = client.readString();
+            String body = "";
+            if (contentLength > 0 && contentLength < 4096) {
+                body.reserve(contentLength + 1);
+                unsigned long readStart = millis();
+                while (body.length() < (size_t)contentLength && millis() - readStart < 600) {
+                    if (client.available()) {
+                        body += (char)client.read();
+                    } else {
+                        delay(2);
+                    }
+                }
+            } else {
+                unsigned long readStart = millis();
+                while (client.available() && millis() - readStart < 400) {
+                    body += (char)client.read();
+                }
+            }
             
             bool responseSent = false;
             if (path == "/api/command") {
@@ -516,9 +575,16 @@ void loop() {
                 client.println();
                 client.println("{\"status\":\"ok\"}");
             }
+        } else {
+            client.println("HTTP/1.1 404 Not Found");
+            client.println("Connection: close");
+            client.println("Content-Type: text/plain");
+            client.println();
+            client.println("Not Found");
         }
-        client.stop();
     }
+    client.stop();
+}
 
     // 3. Sensor Reading (Non-blocking)
     if (now - lastTempRead > 750) { // DS18B20 conversion time
